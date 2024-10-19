@@ -1,0 +1,6 @@
+{
+    "check_interval": 60,
+    "notify_locked_threshold": 1800,
+    "notify_unlocked_threshold": 7200,
+    "sound_file_path": "./sound.mp3"
+}
