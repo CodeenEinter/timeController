@@ -1,3 +1,4 @@
+import io
 import sys
 import time
 import ctypes
@@ -34,7 +35,7 @@ def load_config():  # 读取配置文件
             return json.load(config_file)
     except FileNotFoundError:
         return {
-            "check_interval": 20,  # seconds
+            "check_interval": 30,  # seconds
             "notify_locked_threshold": 1800,  # seconds
             "notify_unlocked_threshold": 7200,  # seconds
             "sound_file_path": "./sound.mp3"
@@ -115,10 +116,8 @@ def load_sound(file_path):  # 加载音频文件到内存中
 
 
 def generate_sound(sound_data, sample_rate, sample_width, channels):  # 从内存中播放音频
-    if sound_data is not None:
-        sound = pygame.sndarray.make_sound(
-            pygame.sndarray.array_from_string(sound_data, sample_width, channels, sample_rate))
-        sound.play()
+    pygame.mixer.music.load(io.BytesIO(sound_data))
+    pygame.mixer.music.play()
 
 
 def create_image(width, height, color1, color2):  # 创建托盘图标
@@ -142,11 +141,11 @@ def open_settings(icon):  # 打开配置界面
     # icon.stop()
 
 
-def update_icon_title(icon, status):  # 更新托盘图标标题
-    config = load_config()
-    icon.title = f"电脑使用监控 - {status} - " \
-                 f"下次检查在 {config.get('check_interval', 0) / 60 if isinstance(config.get('check_interval', 0), (int, float)) and config['check_interval'] > 60 else config.get('check_interval', 0)}" \
-                 f"{'分钟后' if config.get('check_interval', 0) > 60 else '秒后'}"  # 显示下次检查时间
+def update_icon_title(icon, status, usage_time):  # 更新托盘图标标题
+    if status == "locked":
+        icon.title = f"电脑锁定 - 已使用 {usage_time}"
+    elif status == "unlocked":
+        icon.title = f"使用中 - 已使用 {usage_time}"
 
 
 def main(keyboardInterrupt=None):  # 主程序
@@ -160,25 +159,40 @@ def main(keyboardInterrupt=None):  # 主程序
     icon = pystray.Icon("name", image, "电脑使用监控", menu)
     icon.run_detached()
 
-    was_locked = False
+    was_locked = False  # 新增变量，用于跟踪上次检查时屏幕是否锁定
+    last_activity_time = time.time()  # 记录最后一次活动时间
+    exit_program = False  # 控制程序退出的标志
     try:
         while True:
             if exit_program:
                 break
             idle_duration = get_idle_duration()
+            current_time = time.time()
+            usage_time_seconds = current_time - last_activity_time
+            usage_time_minutes = int(usage_time_seconds // 60)
+            usage_time_hours = int(usage_time_seconds // 3600)
+
             if idle_duration > config['notify_locked_threshold']:
                 if not was_locked:
                     icon.notify("电脑停止使用", "超过设定时间没有使用电脑。")
-                    generate_sound(sound_data, sample_rate, sample_width, channels)
                     was_locked = True
             else:
-                if was_locked and idle_duration < config['notify_unlocked_threshold']:
+                if was_locked and idle_duration < config['notify_locked_threshold']:
                     icon.notify("电脑重新使用", "您已重新开始使用电脑。")
                     was_locked = False
 
-            update_icon_title(icon, "locked" if was_locked else "unlocked")
+                # 检查用户连续使用电脑的时间是否超过阈值
+                if current_time - last_activity_time > config['notify_unlocked_threshold'] and not was_locked:
+                    generate_sound(sound_data, sample_rate, sample_width, channels)
+                    icon.notify("休息提醒", "你已经使用电脑两个小时了，请注意休息。")
+                    last_activity_time = current_time  # 重置活动时间
+
+            # 更新图标标题
+            usage_time_str = f"{usage_time_hours}小时{usage_time_minutes % 60}分钟"
+            update_icon_title(icon, "locked" if was_locked else "unlocked", usage_time_str)
+            print(f"Idle duration: {idle_duration} seconds, Usage time: {usage_time_str}")
             time.sleep(config['check_interval'])
-    except keyboardInterrupt:
+    except KeyboardInterrupt:
         pass
     finally:
         icon.stop()
